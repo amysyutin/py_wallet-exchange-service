@@ -1,3 +1,4 @@
+import os
 from decimal import Decimal
 
 import pytest
@@ -10,7 +11,7 @@ from app.connectors.binance import BinanceConnectorError, SpotBalance
 from app.main import app
 from app.models.exchanges import ExchangeSnapshotRun
 
-INTERNAL_HEADERS = {"X-Internal-Token": "test-internal-token"}
+INTERNAL_HEADERS = {"X-Internal-Token": os.environ["INTERNAL_API_TOKEN"]}
 
 
 class SuccessfulBinanceConnector:
