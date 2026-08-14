@@ -1,0 +1,79 @@
+name: Exchange Service CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exchange-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: wallet
+          POSTGRES_DB: wallet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wallet -d wallet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+psycopg://wallet:wallet@localhost:5432/wallet
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Verify and sync locked dependencies
+        run: |
+          uv lock --check
+          uv sync --frozen --extra dev
+
+      - name: Lint
+        run: .venv/bin/ruff check .
+
+      - name: Format check
+        run: .venv/bin/ruff format --check .
+
+      - name: Type check
+        run: .venv/bin/mypy
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest -v --tb=short --cov=app --cov-report=term-missing
+
+      - name: Run database migrations
+        run: |
+          .venv/bin/alembic upgrade head
+          .venv/bin/alembic current
+          .venv/bin/alembic check
+
+      - name: Build Docker image
+        run: docker build -t py-wallet-exchange-service:${{ github.sha }} .
