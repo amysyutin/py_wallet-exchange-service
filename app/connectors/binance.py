@@ -108,6 +108,56 @@ class BinanceConnector:
                 balances[balance.asset] = balance
         return tuple(balances[asset] for asset in sorted(balances))
 
+    def fetch_usdt_prices(self, assets: tuple[str, ...]) -> dict[str, Decimal]:
+        """Return positive Binance USDT quote prices for the requested assets."""
+        normalized_assets = {asset.strip().upper() for asset in assets if asset.strip()}
+        prices = {"USDT": Decimal("1")} if "USDT" in normalized_assets else {}
+        requested_pairs = {f"{asset}USDT": asset for asset in normalized_assets if asset != "USDT"}
+        if not requested_pairs:
+            return prices
+
+        try:
+            with httpx.Client(
+                base_url=self._base_url,
+                timeout=self._timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = client.get("/api/v3/ticker/price")
+        except httpx.TimeoutException as error:
+            raise BinanceConnectorError("price_timeout") from error
+        except httpx.HTTPError as error:
+            raise BinanceConnectorError("price_transport_error") from error
+
+        provider_code = self._read_provider_error_code(response)
+        if response.status_code in {418, 429} or provider_code == -1003:
+            raise BinanceConnectorError("price_rate_limited")
+        if response.status_code >= 500:
+            raise BinanceConnectorError("price_provider_unavailable")
+        if response.status_code >= 400:
+            raise BinanceConnectorError("price_provider_error")
+
+        try:
+            payload: Any = response.json()
+        except ValueError as error:
+            raise BinanceConnectorError("price_invalid_response") from error
+        if not isinstance(payload, list):
+            raise BinanceConnectorError("price_invalid_response")
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            symbol = item.get("symbol")
+            asset = requested_pairs.get(symbol) if isinstance(symbol, str) else None
+            if asset is None:
+                continue
+            try:
+                price = Decimal(str(item["price"]))
+            except (InvalidOperation, KeyError, ValueError):
+                continue
+            if price.is_finite() and price > 0:
+                prices[asset] = price
+        return prices
+
     @staticmethod
     def _read_provider_error_code(response: httpx.Response) -> int | None:
         if response.status_code < 400:

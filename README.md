@@ -2,8 +2,9 @@
 
 Read-only exchange integration service for `py_wallet`. It collects non-zero Binance
 Spot balances through the signed `GET /api/v3/account` USER_DATA endpoint, persists
-immutable snapshot runs in service-owned tables, and exposes them only through a
-token-protected internal API. It does not implement order or transfer endpoints.
+immutable snapshot runs with Binance USDT-quoted valuations in service-owned tables,
+and exposes them only through a token-protected internal API. It does not implement
+order or transfer endpoints.
 
 ## Requirements
 
@@ -53,9 +54,21 @@ curl -fsS "http://127.0.0.1:8002/internal/exchange-snapshots/latest?user_id=1" \
   -H "X-Internal-Token: ${INTERNAL_API_TOKEN}"
 ```
 
+Read successful history, including the latest seed before the requested window:
+
+```bash
+curl -fsS "http://127.0.0.1:8002/internal/exchange-snapshots/history?user_id=1&since=2026-09-01T00:00:00Z" \
+  -H "X-Internal-Token: ${INTERNAL_API_TOKEN}"
+```
+
 The service stores `exchange_snapshot_runs` and `exchange_balances` and never stores
 the Binance API key or secret. Failed collections retain only a bounded error code;
 provider messages and credentials are not exposed through the API.
+
+For each non-zero balance, collection also reads Binance's public all-symbol ticker
+once and stores the matching `<ASSET>USDT` price as `binance_usdt`. USDT is valued at
+one dollar. Missing or unavailable quotes remain null instead of failing the balance
+snapshot or inventing a historical value.
 
 ## Binance configuration
 

@@ -38,12 +38,22 @@ class ExchangeSnapshotService:
             self.database.commit()
             raise ExchangeSnapshotSyncError(run_id=snapshot_run.id, code=error.code) from error
 
+        try:
+            prices = connector.fetch_usdt_prices(tuple(balance.asset for balance in balances))
+        except BinanceConnectorError:
+            prices = {}
+
         snapshot_run.balances = [
             ExchangeBalance(
                 asset=balance.asset,
                 free=balance.free,
                 locked=balance.locked,
                 total=balance.total,
+                price_usd=prices.get(balance.asset),
+                usd_value=(
+                    balance.total * prices[balance.asset] if balance.asset in prices else None
+                ),
+                price_source=("binance_usdt" if balance.asset in prices else None),
             )
             for balance in balances
         ]
@@ -74,3 +84,45 @@ class ExchangeSnapshotService:
             .order_by(ExchangeSnapshotRun.created_at.desc(), ExchangeSnapshotRun.id.desc())
             .limit(1)
         )
+
+    def get_history(
+        self,
+        *,
+        user_id: int,
+        since: datetime,
+        limit: int,
+    ) -> list[ExchangeSnapshotRun]:
+        seed = self.database.scalar(
+            select(ExchangeSnapshotRun)
+            .options(selectinload(ExchangeSnapshotRun.balances))
+            .where(
+                ExchangeSnapshotRun.user_id == user_id,
+                ExchangeSnapshotRun.exchange == ExchangeName.BINANCE.value,
+                ExchangeSnapshotRun.status == ExchangeSnapshotStatus.SUCCESS.value,
+                ExchangeSnapshotRun.completed_at < since,
+            )
+            .order_by(
+                ExchangeSnapshotRun.completed_at.desc(),
+                ExchangeSnapshotRun.id.desc(),
+            )
+            .limit(1)
+        )
+        rows = list(
+            self.database.scalars(
+                select(ExchangeSnapshotRun)
+                .options(selectinload(ExchangeSnapshotRun.balances))
+                .where(
+                    ExchangeSnapshotRun.user_id == user_id,
+                    ExchangeSnapshotRun.exchange == ExchangeName.BINANCE.value,
+                    ExchangeSnapshotRun.status == ExchangeSnapshotStatus.SUCCESS.value,
+                    ExchangeSnapshotRun.completed_at >= since,
+                )
+                .order_by(
+                    ExchangeSnapshotRun.completed_at.desc(),
+                    ExchangeSnapshotRun.id.desc(),
+                )
+                .limit(limit)
+            )
+        )
+        rows.reverse()
+        return ([seed] if seed is not None else []) + rows

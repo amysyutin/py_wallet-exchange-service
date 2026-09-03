@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,7 +8,11 @@ from app.api.auth import require_internal_token
 from app.config import Settings, get_settings
 from app.connectors.binance import BinanceConnector
 from app.db import get_db
-from app.schemas.exchanges import ExchangeSnapshotCreate, ExchangeSnapshotResponse
+from app.schemas.exchanges import (
+    ExchangeSnapshotCreate,
+    ExchangeSnapshotHistoryResponse,
+    ExchangeSnapshotResponse,
+)
 from app.services.exchange_snapshots import ExchangeSnapshotService, ExchangeSnapshotSyncError
 
 router = APIRouter(
@@ -67,3 +72,20 @@ def latest_exchange_snapshot(
             detail="exchange snapshot not found",
         )
     return ExchangeSnapshotResponse.model_validate(snapshot_run)
+
+
+@router.get("/history", response_model=ExchangeSnapshotHistoryResponse)
+def exchange_snapshot_history(
+    database: DatabaseSession,
+    user_id: Annotated[int, Query(gt=0)],
+    since: Annotated[datetime, Query()],
+    limit: Annotated[int, Query(ge=1, le=5000)] = 5000,
+) -> ExchangeSnapshotHistoryResponse:
+    snapshots = ExchangeSnapshotService(database).get_history(
+        user_id=user_id,
+        since=since,
+        limit=limit,
+    )
+    return ExchangeSnapshotHistoryResponse(
+        snapshots=[ExchangeSnapshotResponse.model_validate(row) for row in snapshots]
+    )
