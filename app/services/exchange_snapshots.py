@@ -107,6 +107,7 @@ class ExchangeSnapshotService:
             )
             .limit(1)
         )
+        row_limit = limit - 1 if seed is not None else limit
         rows = list(
             self.database.scalars(
                 select(ExchangeSnapshotRun)
@@ -121,7 +122,7 @@ class ExchangeSnapshotService:
                     ExchangeSnapshotRun.completed_at.desc(),
                     ExchangeSnapshotRun.id.desc(),
                 )
-                .limit(limit)
+                .limit(row_limit)
             )
         )
         rows.reverse()

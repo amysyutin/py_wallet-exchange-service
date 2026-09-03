@@ -141,6 +141,19 @@ def test_history_is_user_scoped_and_includes_one_seed_before_window(
         second["id"],
     ]
 
+    limited = client.get(
+        "/internal/exchange-snapshots/history",
+        headers=INTERNAL_HEADERS,
+        params={
+            "user_id": 7,
+            "since": (now - timedelta(days=1)).isoformat(),
+            "limit": 1,
+        },
+    )
+
+    assert limited.status_code == 200
+    assert [row["id"] for row in limited.json()["snapshots"]] == [first["id"]]
+
 
 def test_failed_sync_is_persisted_without_provider_message(
     client: TestClient,
