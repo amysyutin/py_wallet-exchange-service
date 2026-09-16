@@ -54,5 +54,8 @@ class ExchangeBalance(Base):
     free: Mapped[Decimal] = mapped_column(Numeric(38, 18))
     locked: Mapped[Decimal] = mapped_column(Numeric(38, 18))
     total: Mapped[Decimal] = mapped_column(Numeric(38, 18))
+    price_usd: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    usd_value: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_source: Mapped[str | None] = mapped_column(String(32))
 
     snapshot_run: Mapped[ExchangeSnapshotRun] = relationship(back_populates="balances")

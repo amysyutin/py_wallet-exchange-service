@@ -45,6 +45,53 @@ def test_connector_signs_request_and_returns_non_zero_balances() -> None:
     ]
 
 
+def test_connector_fetches_positive_usdt_prices_in_one_public_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v3/ticker/price"
+        assert "X-MBX-APIKEY" not in request.headers
+        return httpx.Response(
+            200,
+            json=[
+                {"symbol": "BTCUSDT", "price": "61234.50"},
+                {"symbol": "ETHUSDT", "price": "0"},
+                {"symbol": "IGNOREDUSDT", "price": "123"},
+            ],
+        )
+
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert connector.fetch_usdt_prices(("BTC", "ETH", "USDT")) == {
+        "BTC": Decimal("61234.50"),
+        "USDT": Decimal("1"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_code"),
+    [
+        (httpx.Response(429), "price_rate_limited"),
+        (httpx.Response(500), "price_provider_unavailable"),
+        (httpx.Response(200, json={}), "price_invalid_response"),
+    ],
+)
+def test_connector_maps_price_errors(
+    response: httpx.Response,
+    expected_code: str,
+) -> None:
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(lambda _request: response),
+    )
+
+    with pytest.raises(BinanceConnectorError, match=expected_code):
+        connector.fetch_usdt_prices(("BTC",))
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_code"),
     [

@@ -16,6 +16,9 @@ class ExchangeBalanceResponse(BaseModel):
     free: Decimal
     locked: Decimal
     total: Decimal
+    price_usd: Decimal | None
+    usd_value: Decimal | None
+    price_source: Literal["binance_usdt"] | None
 
 
 class ExchangeSnapshotResponse(BaseModel):
@@ -28,3 +31,7 @@ class ExchangeSnapshotResponse(BaseModel):
     created_at: datetime
     completed_at: datetime
     balances: list[ExchangeBalanceResponse]
+
+
+class ExchangeSnapshotHistoryResponse(BaseModel):
+    snapshots: list[ExchangeSnapshotResponse]

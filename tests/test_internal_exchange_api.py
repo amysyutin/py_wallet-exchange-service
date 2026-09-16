@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -21,10 +22,18 @@ class SuccessfulBinanceConnector:
             SpotBalance(asset="USDT", free=Decimal("125"), locked=Decimal("0")),
         )
 
+    def fetch_usdt_prices(self, _assets: tuple[str, ...]) -> dict[str, Decimal]:
+        return {"BTC": Decimal("60000"), "USDT": Decimal("1")}
+
 
 class FailingBinanceConnector:
     def fetch_spot_balances(self) -> tuple[SpotBalance, ...]:
         raise BinanceConnectorError("rate_limited")
+
+
+class PriceFailingBinanceConnector(SuccessfulBinanceConnector):
+    def fetch_usdt_prices(self, _assets: tuple[str, ...]) -> dict[str, Decimal]:
+        raise BinanceConnectorError("price_provider_unavailable")
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Internal-Token": "wrong-token"}])
@@ -65,12 +74,85 @@ def test_sync_persists_balances_and_latest_is_user_scoped(client: TestClient) ->
     assert created.json()["exchange"] == "binance"
     assert created.json()["status"] == "success"
     assert created.json()["balances"] == [
-        {"asset": "BTC", "free": "0.5", "locked": "0.25", "total": "0.75"},
-        {"asset": "USDT", "free": "125", "locked": "0", "total": "125"},
+        {
+            "asset": "BTC",
+            "free": "0.5",
+            "locked": "0.25",
+            "total": "0.75",
+            "price_usd": "60000",
+            "usd_value": "45000.00",
+            "price_source": "binance_usdt",
+        },
+        {
+            "asset": "USDT",
+            "free": "125",
+            "locked": "0",
+            "total": "125",
+            "price_usd": "1",
+            "usd_value": "125",
+            "price_source": "binance_usdt",
+        },
     ]
     assert latest.status_code == 200
     assert latest.json()["id"] == created.json()["id"]
     assert missing.status_code == 404
+
+
+def test_history_is_user_scoped_and_includes_one_seed_before_window(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    app.dependency_overrides[get_binance_connector] = SuccessfulBinanceConnector
+    first = client.post(
+        "/internal/exchange-snapshots/binance",
+        headers=INTERNAL_HEADERS,
+        json={"user_id": 7},
+    ).json()
+    second = client.post(
+        "/internal/exchange-snapshots/binance",
+        headers=INTERNAL_HEADERS,
+        json={"user_id": 7},
+    ).json()
+    other = client.post(
+        "/internal/exchange-snapshots/binance",
+        headers=INTERNAL_HEADERS,
+        json={"user_id": 8},
+    ).json()
+    now = datetime.now(UTC)
+    with session_factory() as database:
+        first_run = database.get(ExchangeSnapshotRun, first["id"])
+        second_run = database.get(ExchangeSnapshotRun, second["id"])
+        other_run = database.get(ExchangeSnapshotRun, other["id"])
+        assert first_run is not None and second_run is not None and other_run is not None
+        first_run.completed_at = now - timedelta(days=2)
+        second_run.completed_at = now - timedelta(hours=1)
+        other_run.completed_at = now - timedelta(minutes=30)
+        database.commit()
+
+    response = client.get(
+        "/internal/exchange-snapshots/history",
+        headers=INTERNAL_HEADERS,
+        params={"user_id": 7, "since": (now - timedelta(days=1)).isoformat()},
+    )
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["snapshots"]] == [
+        first["id"],
+        second["id"],
+    ]
+
+    limited = client.get(
+        "/internal/exchange-snapshots/history",
+        headers=INTERNAL_HEADERS,
+        params={
+            "user_id": 7,
+            "since": (now - timedelta(days=1)).isoformat(),
+            "limit": 1,
+        },
+    )
+
+    assert limited.status_code == 200
+    assert [row["id"] for row in limited.json()["snapshots"]] == [first["id"]]
 
 
 def test_failed_sync_is_persisted_without_provider_message(
@@ -93,6 +175,24 @@ def test_failed_sync_is_persisted_without_provider_message(
         assert snapshot_run is not None
         assert snapshot_run.status == "failed"
         assert snapshot_run.error_code == "rate_limited"
+
+
+def test_price_failure_keeps_balance_snapshot_honestly_unvalued(client: TestClient) -> None:
+    app.dependency_overrides[get_binance_connector] = PriceFailingBinanceConnector
+
+    response = client.post(
+        "/internal/exchange-snapshots/binance",
+        headers=INTERNAL_HEADERS,
+        json={"user_id": 10},
+    )
+
+    assert response.status_code == 201
+    assert all(
+        balance["price_usd"] is None
+        and balance["usd_value"] is None
+        and balance["price_source"] is None
+        for balance in response.json()["balances"]
+    )
 
 
 def test_internal_api_rejects_invalid_user_id(client: TestClient) -> None:
