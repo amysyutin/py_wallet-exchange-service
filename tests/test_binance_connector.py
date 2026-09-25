@@ -93,6 +93,31 @@ def test_connector_maps_price_errors(
 
 
 @pytest.mark.parametrize(
+    "expected_code",
+    [
+        "price_timeout",
+        "price_transport_error",
+    ],
+)
+def test_connector_maps_price_transport_errors(expected_code: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if expected_code == "price_timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        raise httpx.ConnectError("offline", request=request)
+
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(BinanceConnectorError) as error:
+        connector.fetch_usdt_prices(("BTC",))
+
+    assert error.value.code == expected_code
+
+
+@pytest.mark.parametrize(
     ("status_code", "expected_code"),
     [
         (401, "authentication_failed"),
