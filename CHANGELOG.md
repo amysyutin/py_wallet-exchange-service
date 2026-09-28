@@ -15,4 +15,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Add direct regression coverage for non-JSON and malformed Binance balance and
+  price responses.
 - Add direct regression coverage for Binance price lookup timeout and transport-error mapping.
