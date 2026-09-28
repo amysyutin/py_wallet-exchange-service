@@ -117,6 +117,47 @@ def test_connector_maps_price_transport_errors(expected_code: str) -> None:
     assert error.value.code == expected_code
 
 
+def test_connector_rejects_non_json_price_response() -> None:
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                content=b"not-json",
+                headers={"content-type": "application/json"},
+            )
+        ),
+    )
+
+    with pytest.raises(BinanceConnectorError, match="price_invalid_response"):
+        connector.fetch_usdt_prices(("BTC",))
+
+
+def test_connector_skips_malformed_price_rows() -> None:
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json=[
+                    "not-an-object",
+                    {"symbol": 123, "price": "1"},
+                    {"symbol": "BTCUSDT"},
+                    {"symbol": "ETHUSDT", "price": "not-a-number"},
+                    {"symbol": "SOLUSDT", "price": "NaN"},
+                    {"symbol": "BNBUSDT", "price": "600"},
+                ],
+            )
+        ),
+    )
+
+    prices = connector.fetch_usdt_prices(("BTC", "ETH", "SOL", "BNB"))
+
+    assert prices == {"BNB": Decimal("600")}
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_code"),
     [
@@ -158,6 +199,23 @@ def test_connector_rejects_invalid_responses(payload: object) -> None:
         api_key="api-key",
         api_secret="api-secret",
         transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)),
+    )
+
+    with pytest.raises(BinanceConnectorError, match="invalid_response"):
+        connector.fetch_spot_balances()
+
+
+def test_connector_rejects_non_json_balance_response() -> None:
+    connector = BinanceConnector(
+        api_key="api-key",
+        api_secret="api-secret",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                content=b"not-json",
+                headers={"content-type": "application/json"},
+            )
+        ),
     )
 
     with pytest.raises(BinanceConnectorError, match="invalid_response"):
